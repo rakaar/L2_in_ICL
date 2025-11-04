@@ -72,7 +72,7 @@ def get_config(debug=False):
               preproc=dict(downsample=False,),
               optimizer=dict(
                   name='adam',
-                  kwargs={},
+                  kwargs=dict(weight_decay=0.0),
                   # Set up the learning rate schedule.
                   max_lr=3e-4,
                   warmup_steps=4000,
