@@ -22,6 +22,7 @@ import math
 import os
 import signal
 import threading
+from typing import Any, Dict, Mapping, Tuple
 
 from absl import app
 from absl import flags
@@ -47,6 +48,58 @@ from emergent_in_context_learning.modules.transformer import Transformer
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 FLAGS = flags.FLAGS
+
+_WEIGHT_EXCLUDE_TOKENS = (
+    'bias', 'b', 'layernorm', 'layer_norm', 'ln', 'scale', 'gain', 'norm')
+
+
+def _iter_leaves_with_paths(tree: Any, prefix: Tuple[str, ...] = ()):
+  """Yield (path, leaf) tuples from a nested mapping/sequence structure."""
+  # We consider Mapping first for Haiku params (nested dicts).
+  if isinstance(tree, Mapping):
+    for key, value in tree.items():
+      yield from _iter_leaves_with_paths(value, prefix + (str(key),))
+  # Fall back to sequences that are not strings/bytes.
+  elif isinstance(tree, (list, tuple)):
+    for idx, value in enumerate(tree):
+      yield from _iter_leaves_with_paths(value, prefix + (str(idx),))
+  else:
+    yield prefix, tree
+
+
+def _should_include_param(path: Tuple[str, ...], value, include_all: bool) -> bool:
+  """Return True if the parameter should contribute to the norm."""
+  if include_all:
+    return jnp.issubdtype(getattr(value, 'dtype', jnp.float32), jnp.floating)
+  dtype = getattr(value, 'dtype', None)
+  if dtype is None or not jnp.issubdtype(dtype, jnp.floating):
+    return False
+  name = '/'.join(path).lower()
+  if any(token in name for token in _WEIGHT_EXCLUDE_TOKENS):
+    return False
+  if getattr(value, 'ndim', 1) == 0:
+    return False
+  return True
+
+
+def tree_l2_norm(tree: Any, include_all: bool = False) -> jnp.ndarray:
+  """Compute L2 norm over selected leaves in a PyTree of parameters."""
+  total = jnp.array(0., dtype=jnp.float32)
+  for path, leaf in _iter_leaves_with_paths(tree):
+    if _should_include_param(path, leaf, include_all):
+      leaf_val = jnp.asarray(leaf, dtype=jnp.float32)
+      total = total + jnp.sum(jnp.square(leaf_val))
+  return jnp.sqrt(total)
+
+
+def tree_l2_norm_per_top_level(
+    tree: Mapping[str, Any], include_all: bool = False) -> Dict[str, jnp.ndarray]:
+  """Compute L2 norms for each top-level entry in the parameter tree."""
+  norms = {}
+  if isinstance(tree, Mapping):
+    for key, value in tree.items():
+      norms[str(key)] = tree_l2_norm(value, include_all=include_all)
+  return norms
 
 
 class Experiment(experiment.AbstractExperiment):
@@ -518,6 +571,15 @@ class Experiment(experiment.AbstractExperiment):
     updates, opt_state = opt_update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
+    # Track parameter & gradient norms to study regularisation/ICL emergence.
+    loss_acc_scalars = dict(loss_acc_scalars)
+    loss_acc_scalars['weight_l2'] = tree_l2_norm(params, include_all=False)
+    loss_acc_scalars['weight_l2_all'] = tree_l2_norm(params, include_all=True)
+    loss_acc_scalars['grad_l2'] = tree_l2_norm(grads, include_all=True)
+    for sub_name, sub_norm in tree_l2_norm_per_top_level(
+        params, include_all=False).items():
+      loss_acc_scalars[f'weight_l2/{sub_name}'] = sub_norm
+
     # Scalars to log (note: we log the mean across all hosts/devices).
     scalars = jax.lax.pmean(loss_acc_scalars, axis_name='i')
 
@@ -576,7 +638,12 @@ class Experiment(experiment.AbstractExperiment):
         mask=None, rng=rng, is_training=False)  # [B, T, K]
     labels = batch['target']  # [B, T]
 
-    loss_acc_scalars = self._compute_loss_and_accuracy(logits, labels)
+    loss_acc_scalars = dict(self._compute_loss_and_accuracy(logits, labels))
+    loss_acc_scalars['weight_l2'] = tree_l2_norm(params, include_all=False)
+    loss_acc_scalars['weight_l2_all'] = tree_l2_norm(params, include_all=True)
+    for sub_name, sub_norm in tree_l2_norm_per_top_level(
+        params, include_all=False).items():
+      loss_acc_scalars[f'weight_l2/{sub_name}'] = sub_norm
 
     # Also return the last example, and the corresponding prediction and label.
     logits_to_log = logits[0][-1]
