@@ -52,6 +52,10 @@ FLAGS = flags.FLAGS
 _WEIGHT_EXCLUDE_TOKENS = (
     'bias', 'b', 'layernorm', 'layer_norm', 'ln', 'scale', 'gain', 'norm')
 
+# Older JAX releases do not expose this config flag; set a safe default.
+if not hasattr(jax.config, 'jax_experimental_name_stack'):
+  jax.config.jax_experimental_name_stack = False
+
 
 def _iter_leaves_with_paths(tree: Any, prefix: Tuple[str, ...] = ()):
   """Yield (path, leaf) tuples from a nested mapping/sequence structure."""
