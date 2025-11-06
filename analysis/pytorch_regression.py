@@ -89,38 +89,41 @@ def build_training_args(case: RegressionCase, output_dir: Path) -> argparse.Name
     return argparse.Namespace(**args)
 
 
-def parse_holdout_metrics(progress_path: Path) -> Tuple[int, Dict[str, float]]:
-    """Extract the latest holdout metrics from progress.txt."""
+def parse_holdout_history(progress_path: Path) -> List[Tuple[int, Dict[str, float]]]:
+    """Extract the full holdout evaluation history from progress.txt."""
     if not progress_path.exists():
         raise FileNotFoundError(f"Expected progress log at {progress_path}")
 
-    holdout_lines: List[str] = []
+    history: List[Tuple[int, Dict[str, float]]] = []
     with progress_path.open("r", encoding="utf-8") as handle:
         for line in handle:
-            if line.startswith("[eval_holdout"):
-                holdout_lines.append(line.strip())
+            if not line.startswith("[eval_holdout"):
+                continue
+            parts = line.strip().replace("[", "").replace("]", "").split()
+            if len(parts) < 4:
+                raise RuntimeError(f"Unexpected progress line format: {line}")
+            if parts[1] != "step":
+                raise RuntimeError(f"Unexpected progress line format: {line}")
+            step_value = int(parts[2])
+            metrics: Dict[str, float] = {}
+            for token in parts[3:]:
+                name, value = token.split("=")
+                metrics[name] = float(value)
+            history.append((step_value, metrics))
 
-    if not holdout_lines:
+    if not history:
         raise RuntimeError(
             f"No holdout evaluation entries found in {progress_path}. "
             "Ensure --eval-holdout-interval > 0."
         )
 
-    last_line = holdout_lines[-1]
-    parts = last_line.replace("[", "").replace("]", "").split()
-    if len(parts) < 4:
-        raise RuntimeError(f"Unexpected progress line format: {last_line}")
-    step_token = parts[1]  # e.g. "step"
-    if step_token != "step":
-        raise RuntimeError(f"Unexpected progress line format: {last_line}")
-    step_value = int(parts[2])
+    return history
 
-    metrics: Dict[str, float] = {}
-    for token in parts[3:]:
-        name, value = token.split("=")
-        metrics[name] = float(value)
 
-    return step_value, metrics
+def parse_holdout_metrics(progress_path: Path) -> Tuple[int, Dict[str, float]]:
+    """Extract the latest holdout metrics from progress.txt."""
+    history = parse_holdout_history(progress_path)
+    return history[-1]
 
 
 def run_regression_case(case: RegressionCase, output_root: Path, verbose: bool = True) -> Dict[str, object]:

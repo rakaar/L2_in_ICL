@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the PyTorch Figure 3a sweep (bursty symbolic sequences, varying classes).
+"""Run the PyTorch Figure 3a sweep (bursty sequences, varying class counts).
 
 This utility mirrors the JAX `run_adamw_sweep.py` orchestrator but targets the
 PyTorch training stack. It launches one training job per class-count setting,
@@ -18,13 +18,13 @@ import csv
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from analysis.pytorch_regression import parse_holdout_metrics
+from analysis.pytorch_regression import parse_holdout_history
 
 
 DEFAULT_CLASS_COUNTS: Sequence[int] = (100, 200, 400, 800, 1600)
@@ -35,6 +35,7 @@ class SweepConfig:
     """Shared configuration for the sweep."""
 
     output_root: Path
+    example_type: str
     n_common: int
     n_holdout: int
     max_steps: int
@@ -79,11 +80,14 @@ def _build_training_command(
     train_dir.mkdir(parents=True, exist_ok=True)
 
     n_rare = _compute_rare_classes(class_count, config.n_common, config.n_holdout)
-    symbolic_size = (
-        config.symbolic_dataset_size
-        if config.symbolic_dataset_size is not None
-        else _default_symbolic_dataset_size(class_count + config.n_holdout)
-    )
+    if config.example_type == "symbolic":
+        symbolic_size = (
+            config.symbolic_dataset_size
+            if config.symbolic_dataset_size is not None
+            else _default_symbolic_dataset_size(class_count + config.n_holdout)
+        )
+    else:
+        symbolic_size = None
 
     command: List[str] = [
         sys.executable,
@@ -91,7 +95,7 @@ def _build_training_command(
         "--config",
         "none",
         "--example-type",
-        "symbolic",
+        config.example_type,
         "--output-dir",
         str(train_dir),
         "--device",
@@ -114,10 +118,10 @@ def _build_training_command(
         str(config.eval_interval),
         "--eval-holdout-batches",
         str(config.eval_batches),
-        "--symbolic-dataset-size",
-        str(symbolic_size),
     ]
 
+    if symbolic_size is not None:
+        command.extend(["--symbolic-dataset-size", str(symbolic_size)])
     if config.batch_size is not None:
         command.extend(["--batch-size", str(config.batch_size)])
     if config.eval_batch_size is not None:
@@ -168,16 +172,17 @@ def _summarize_case(
     *,
     class_count: int,
     run_dir: Path,
-) -> dict:
+) -> Tuple[dict, List[Tuple[int, Dict[str, float]]]]:
     progress_path = run_dir / "train" / "progress.txt"
-    step, metrics = parse_holdout_metrics(progress_path)
+    history = parse_holdout_history(progress_path)
+    step, metrics = history[-1]
     result = {
         "class_count": class_count,
         "step": step,
         **metrics,
         "progress_path": str(progress_path),
     }
-    return result
+    return result, history
 
 
 def _write_results_csv(results: Iterable[dict], destination: Path) -> None:
@@ -198,7 +203,26 @@ def _write_results_csv(results: Iterable[dict], destination: Path) -> None:
             writer.writerow({key: row.get(key) for key in fieldnames})
 
 
-def _save_plot(results: List[dict], destination: Path) -> None:
+def _write_history_csv(history_rows: Iterable[dict], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    rows = list(history_rows)
+    if not rows:
+        raise RuntimeError("No history rows available to write.")
+    metric_keys = sorted(
+        key for key in rows[0].keys() if key not in {"class_count", "step", "progress_path"}
+    )
+    fieldnames = ["class_count", "step"] + metric_keys + ["progress_path"]
+    with destination.open("w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key) for key in fieldnames})
+
+
+def _save_plot(
+    history_map: Dict[int, List[Tuple[int, Dict[str, float]]]],
+    destination: Path,
+) -> None:
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:  # pragma: no cover - optional dependency
@@ -209,15 +233,17 @@ def _save_plot(results: List[dict], destination: Path) -> None:
 
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    class_counts = [row["class_count"] for row in results]
-    accuracies = [row.get("accuracy_query", 0.0) for row in results]
-
     plt.figure(figsize=(6, 4))
-    plt.plot(class_counts, accuracies, marker="o", linewidth=2)
-    plt.xlabel("Number of training classes")
+    for class_count in sorted(history_map.keys()):
+        steps = [step for step, _ in history_map[class_count]]
+        accuracies = [metrics.get("accuracy_query", 0.0) for _, metrics in history_map[class_count]]
+        label = f"{class_count} classes"
+        plt.plot(steps, accuracies, marker="o", linewidth=2, label=label)
+    plt.xlabel("Training step")
     plt.ylabel("Holdout accuracy (accuracy_query)")
     plt.title("Figure 3a (PyTorch) – Bursty p=0.9")
     plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
+    plt.legend()
     plt.tight_layout()
     plt.savefig(destination, dpi=200)
     plt.close()
@@ -237,6 +263,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=Path,
         default=REPO_ROOT / "runs" / "figure3a_torch",
         help="Directory where run outputs and summary CSV will be written.",
+    )
+    parser.add_argument(
+        "--example-type",
+        choices=("symbolic", "omniglot"),
+        default="omniglot",
+        help="Type of examples to train on (symbolic integers or Omniglot images).",
     )
     parser.add_argument(
         "--n-common",
@@ -350,6 +382,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Filename for the aggregated metrics CSV (stored under output root).",
     )
     parser.add_argument(
+        "--timeseries-csv-name",
+        default="figure3a_torch_timeseries.csv",
+        help="Filename for the holdout evaluation history CSV.",
+    )
+    parser.add_argument(
         "--plot",
         action="store_true",
         help="Save a Figure 3a-style plot using the aggregated results.",
@@ -361,8 +398,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    example_encoding = args.example_encoding
+    if example_encoding is None and args.example_type == "omniglot":
+        example_encoding = "resnet"
+
     config = SweepConfig(
         output_root=args.output_root,
+        example_type=args.example_type,
         n_common=args.n_common,
         n_holdout=args.n_holdout,
         max_steps=args.max_steps,
@@ -376,7 +418,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         log_interval=args.log_interval,
         save_interval=args.save_interval,
         symbolic_dataset_size=args.symbolic_dataset_size,
-        example_encoding=args.example_encoding,
+        example_encoding=example_encoding,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
         seq_len=args.seq_len,
@@ -385,6 +427,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     config.output_root.mkdir(parents=True, exist_ok=True)
 
     summaries: List[dict] = []
+    history_rows: List[dict] = []
+    history_by_class: Dict[int, List[Tuple[int, Dict[str, float]]]] = {}
     for index, class_count in enumerate(args.class_counts):
         run_dir = config.output_root / f"class_{class_count:05d}"
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -393,8 +437,18 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         if args.skip_completed and progress_path.exists():
             print(f"[skip] Found existing progress log for class_count={class_count}: {progress_path}")
-            summary = _summarize_case(class_count=class_count, run_dir=run_dir)
+            summary, history = _summarize_case(class_count=class_count, run_dir=run_dir)
             summaries.append(summary)
+            history_by_class[class_count] = history
+            history_rows.extend(
+                {
+                    "class_count": class_count,
+                    "step": step,
+                    **metrics,
+                    "progress_path": str(progress_path),
+                }
+                for step, metrics in history
+            )
             continue
 
         print("=" * 80)
@@ -412,8 +466,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         log_path = run_dir / "logs" / "train.log"
         _run_subprocess(command, log_path=log_path)
 
-        summary = _summarize_case(class_count=class_count, run_dir=run_dir)
+        summary, history = _summarize_case(class_count=class_count, run_dir=run_dir)
         summaries.append(summary)
+        history_by_class[class_count] = history
+        history_rows.extend(
+            {
+                "class_count": class_count,
+                "step": step,
+                **metrics,
+                "progress_path": str(progress_path),
+            }
+            for step, metrics in history
+        )
 
     if not summaries:
         raise RuntimeError("No runs executed; aborting before writing results.")
@@ -422,9 +486,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     _write_results_csv(summaries, results_csv)
     print(f"Wrote Figure 3a metrics to {results_csv}")
 
+    timeseries_csv = config.output_root / args.timeseries_csv_name
+    _write_history_csv(history_rows, timeseries_csv)
+    print(f"Wrote Figure 3a holdout history to {timeseries_csv}")
+
     if args.plot:
         figure_path = config.output_root / args.figure_name
-        _save_plot(summaries, figure_path)
+        _save_plot(history_by_class, figure_path)
         print(f"Saved Figure 3a plot to {figure_path}")
 
 

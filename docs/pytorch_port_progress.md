@@ -20,8 +20,34 @@ _Last updated: 2025-11-06_
 
 ## Phase 3 – Validation & Sweeps
 - Added `analysis/pytorch_regression.py`, a fast regression harness that exercises the symbolic trainer at 100- and 1600-class settings and validates holdout metrics from `progress.txt`.
-- Added `analysis/run_figure3a_torch.py`, an orchestration script that sweeps class counts for the Figure 3a reproduction (bursty symbolic runs with `p_bursty=0.9`) and emits an aggregated CSV of holdout accuracies plus an optional Matplotlib plot (`--plot`).
+- Extended `analysis/run_figure3a_torch.py` to drive either symbolic or Omniglot sweeps, emit both final metrics and full evaluation histories (per-step CSV), and plot Figure 3a as accuracy-vs-training-step curves (`--plot`) once TensorFlow/Matplotlib are installed.
 - Smoke-tested both scripts via the project-local virtualenv; results land under `runs/torch_regression/` and `runs/figure3a_torch/` by default and can be re-pointed for GPU executions.
+
+## Figure 3a PyTorch Runbook (Omniglot)
+1. **Environment**
+   - `python3 -m venv .venv && source .venv/bin/activate`
+   - `pip install --upgrade pip`
+   - PyTorch (pick the CUDA wheel for your GPU, e.g. `pip install torch==2.2.0+cu118 --index-url https://download.pytorch.org/whl/cu118`)
+   - Supporting deps: `pip install numpy==1.26.4 ml_collections matplotlib tensorflow==2.12.0`
+2. **Quick regression check (CPU-friendly)**  
+   `python analysis/pytorch_regression.py --quiet`
+3. **Figure 3a sweep (bursty `p_bursty = 0.9`, Omniglot, ResNet embedder)**  
+   ```
+   python analysis/run_figure3a_torch.py \
+     --class-counts 100 200 400 800 1600 \
+     --example-type omniglot \
+     --batch-size 32 \
+     --max-steps 50000 \
+     --eval-interval 1000 \
+     --eval-batches 64 \
+     --num-workers 4 \
+     --device cuda \
+     --plot
+   ```
+   Outputs (under `runs/figure3a_torch/`):
+   - `figure3a_torch_metrics.csv` – final holdout metrics per class count.
+   - `figure3a_torch_timeseries.csv` – per-eval-step history.
+   - `figure3a_torch.png` – Figure 3a-style holdout accuracy vs training step.
 
 ## Next Focus
 1. Run the new Figure 3a sweep on GPU hardware to obtain longer-training checkpoints and compare against archived JAX metrics.
