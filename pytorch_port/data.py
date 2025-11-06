@@ -15,11 +15,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset
 try:
   from datasets import data_generators
-except ModuleNotFoundError as exc:  # pragma: no cover - fallback for missing TF.
+except ModuleNotFoundError:  # pragma: no cover - fallback for missing TF.
   def _unavailable(*_, **__):
     raise ModuleNotFoundError(
         "TensorFlow is required for Omniglot support. Install tensorflow>=2.9 "
-        "or set example_type='symbolic'.") from exc
+        "or set example_type='symbolic'.")
 
   tf_stub = types.ModuleType("tensorflow")
   image_stub = types.SimpleNamespace(

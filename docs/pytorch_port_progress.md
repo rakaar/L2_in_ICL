@@ -28,7 +28,7 @@ _Last updated: 2025-11-06_
    - `python3 -m venv .venv && source .venv/bin/activate`
    - `pip install --upgrade pip`
    - PyTorch (pick the CUDA wheel for your GPU, e.g. `pip install torch==2.2.0+cu118 --index-url https://download.pytorch.org/whl/cu118`)
-   - Supporting deps: `pip install numpy==1.26.4 ml_collections matplotlib tensorflow==2.12.0`
+   - Supporting deps: `pip install numpy==1.26.4 ml_collections matplotlib tensorflow==2.18.0 tensorflow-datasets==4.9.4`
 2. **Quick regression check (CPU-friendly)**  
    `python analysis/pytorch_regression.py --quiet`
 3. **Figure 3a sweep (bursty `p_bursty = 0.9`, Omniglot, ResNet embedder)**  
