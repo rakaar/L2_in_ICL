@@ -20,7 +20,7 @@ _Last updated: 2025-11-06_
 
 ## Phase 3 – Validation & Sweeps
 - Added `analysis/pytorch_regression.py`, a fast regression harness that exercises the symbolic trainer at 100- and 1600-class settings and validates holdout metrics from `progress.txt`.
-- Extended `analysis/run_figure3a_torch.py` to drive either symbolic or Omniglot sweeps, emit both final metrics and full evaluation histories (per-step CSV), and plot Figure 3a as accuracy-vs-training-step curves (`--plot`) once TensorFlow/Matplotlib are installed.
+- Extended `analysis/run_figure3a_torch.py` to drive either symbolic or Omniglot sweeps, emit both final metrics and full evaluation histories (per-step CSV), plot Figure 3a as accuracy-vs-training-step curves (`--plot`), and forward the new `--optimizer {adam,adamw}` switch to the trainer once TensorFlow/Matplotlib are installed.
 - Smoke-tested both scripts via the project-local virtualenv; results land under `runs/torch_regression/` and `runs/figure3a_torch/` by default and can be re-pointed for GPU executions.
 
 ## Figure 3a PyTorch Runbook (Omniglot)
@@ -36,6 +36,7 @@ _Last updated: 2025-11-06_
    python analysis/run_figure3a_torch.py \
      --class-counts 100 200 400 800 1600 \
      --example-type omniglot \
+     --optimizer adam \
      --batch-size 32 \
      --max-steps 50000 \
      --eval-interval 1000 \

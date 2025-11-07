@@ -95,7 +95,7 @@ DEFAULT_BASE_CONFIG: Dict[str, Any] = {
         "w_interim_predictions": 0.0,
     },
     "optimizer": {
-        "name": "adamw",
+        "name": "adam",
         "max_lr": 3e-4,
         "warmup_steps": 4000,
         "clip_level": 0.25,
@@ -197,14 +197,26 @@ def _build_optimizer(
     model: torch.nn.Module,
     learning_rate: float,
     weight_decay: float,
+    name: str,
 ) -> torch.optim.Optimizer:
-    return torch.optim.AdamW(
-        model.parameters(),
-        lr=learning_rate,
-        weight_decay=weight_decay,
-        betas=(0.9, 0.999),
-        eps=1e-8,
-    )
+    name_lower = name.lower()
+    if name_lower == "adamw":
+        return torch.optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+        )
+    if name_lower == "adam":
+        return torch.optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=weight_decay,
+        )
+    raise ValueError(f"Unsupported optimizer '{name}'.")
 
 
 def _schedule_lr(step: int, max_lr: float, warmup_steps: int) -> float:
@@ -413,6 +425,7 @@ def train(args: argparse.Namespace) -> None:
 
     training_cfg = cfg["training"]
     optimizer_cfg = cfg["optimizer"]
+    optimizer_name = args.optimizer or optimizer_cfg.get("name", "adam")
     w_interim = training_cfg.get("w_interim_predictions", 0.0)
 
     device = torch.device(args.device)
@@ -447,6 +460,7 @@ def train(args: argparse.Namespace) -> None:
         model,
         learning_rate=args.learning_rate or training_cfg["learning_rate"],
         weight_decay=optimizer_cfg["kwargs"].get("weight_decay", 0.0),
+        name=optimizer_name,
     )
 
     save_dir = Path(args.output_dir) if args.output_dir else None
@@ -552,6 +566,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--learning-rate", type=float, default=None)
+    parser.add_argument("--optimizer", choices=("adam", "adamw"), default=None)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--image-channels", type=int, default=None)
