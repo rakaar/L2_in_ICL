@@ -37,6 +37,7 @@ class SweepConfig:
     output_root: Path
     example_type: str
     optimizer_name: str
+    weight_decay: float | None
     n_common: int
     n_holdout: int
     max_steps: int
@@ -125,6 +126,8 @@ def _build_training_command(
         command.extend(["--symbolic-dataset-size", str(symbolic_size)])
     if config.optimizer_name:
         command.extend(["--optimizer", config.optimizer_name])
+    if config.weight_decay is not None:
+        command.extend(["--weight-decay", str(config.weight_decay)])
     if config.batch_size is not None:
         command.extend(["--batch-size", str(config.batch_size)])
     if config.eval_batch_size is not None:
@@ -386,6 +389,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Optimizer backend passed to pytorch_train.py.",
     )
     parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=None,
+        help="Optional weight-decay value forwarded to pytorch_train.py.",
+    )
+    parser.add_argument(
         "--results-csv-name",
         default="figure3a_torch_metrics.csv",
         help="Filename for the aggregated metrics CSV (stored under output root).",
@@ -415,6 +424,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         output_root=args.output_root,
         example_type=args.example_type,
         optimizer_name=args.optimizer,
+        weight_decay=args.weight_decay,
         n_common=args.n_common,
         n_holdout=args.n_holdout,
         max_steps=args.max_steps,

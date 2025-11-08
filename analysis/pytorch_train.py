@@ -425,6 +425,8 @@ def train(args: argparse.Namespace) -> None:
 
     training_cfg = cfg["training"]
     optimizer_cfg = cfg["optimizer"]
+    if args.weight_decay is not None:
+        optimizer_cfg["kwargs"]["weight_decay"] = args.weight_decay
     optimizer_name = args.optimizer or optimizer_cfg.get("name", "adam")
     w_interim = training_cfg.get("w_interim_predictions", 0.0)
 
@@ -567,6 +569,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--optimizer", choices=("adam", "adamw"), default=None)
+    parser.add_argument("--weight-decay", type=float, default=None)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--image-channels", type=int, default=None)
